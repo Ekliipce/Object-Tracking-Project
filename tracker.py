@@ -17,10 +17,10 @@ def process_frame(frame, matcher, current_frames, frame_index, video_writer, out
     video_writer.write(frame)
 
 def main():
-    det_file_name = "ADL-Rundle-6/det/det.txt"
+    det_file_name = "ADL-Rundle-6/det/yolo.txt"
     det_lines = get_detlines(det_file_name)
 
-    matcher = Matcher()
+    matcher = Matcher(w_iou=0.3, w_similarity=0.7)
     cap = cv2.VideoCapture("ADL-Rundle-6/img1/%06d.jpg")
     
     fourcc = cv2.VideoWriter_fourcc(*'XVID')

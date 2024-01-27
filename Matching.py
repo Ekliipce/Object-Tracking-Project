@@ -1,17 +1,23 @@
 import numpy as np
+import torch
 from scipy.optimize import linear_sum_assignment
 from KalmanFilter import KalmanFilter
+from EmbeddingSimilarity import EmbeddingSimilarity
+from memory_profiler import profile
 
 class Matcher():
     def __init__(self):
         self.current_frames_info = []
+        self.current_frames = None
         self.track = []
         self.kalman_filters = {}
         self.associations = {}
         self.nb_tracks = 0
+        self.embedding_similarity = EmbeddingSimilarity()
 
-    def set_currentframes(self, current_frames_info):
+    def set_currentframes(self, current_frames_info, current_frames):
         self.current_frames_info = current_frames_info
+        self.current_frames = current_frames
 
     def compute_iou(self, boxA, boxB):
         xA = max(boxA[0], boxB[0])
@@ -42,6 +48,7 @@ class Matcher():
     def convert_centroid_to_bb(self, centroid, width, height):
         return np.array([centroid[0] - width/2, centroid[1] - height/2, centroid[0] + width/2, centroid[1] + height/2])
 
+    @profile
     def hungarian_similarity_matrix(self):
         detections = self.current_frames_info
         tracks = self.track
@@ -54,20 +61,37 @@ class Matcher():
         # max_size = max(num_detections, num_tracks)
         cost_matrix = np.full((num_detections, num_tracks), high_cost)
 
+        embedding_batch_detection = self.embedding_similarity.compute_batch_embedding(self.current_frames, detections)
+        embedding_batch_track = self.embedding_similarity.compute_batch_embedding(self.current_frames, tracks)
+        print(embedding_batch_detection.shape, embedding_batch_track.shape)
         for d, detection in enumerate(detections):
+            d_x1, d_y1 = int(detection["bb_left"]), int(detection["bb_top"])
+            d_w1, d_h1 = int(detection["bb_width"]), int(detection["bb_height"])
+            blockA = [d_x1, d_y1, d_x1 + d_w1, d_y1 + d_h1]
+            emb1 = embedding_batch_detection[d].unsqueeze(0)
+
             for t, track in enumerate(tracks):
-                blockA = [detection["bb_left"], detection["bb_top"], detection["bb_left"] + detection["bb_width"], detection["bb_top"] + detection["bb_height"]]
+                t_x2, t_y2 = int(track["bb_left"]), int(track["bb_top"])
+                t_w2, t_h2 = int(track["bb_width"]), int(track["bb_height"])
                 blockB = self.kalman_filters[track["id"]].predict()
-                blockB = self.convert_centroid_to_bb(blockB, track["bb_width"], track["bb_height"])
+                blockB = self.convert_centroid_to_bb(blockB, t_w2, t_h2)
+
+                # Compute visual similarity between the box
+                emb2 = embedding_batch_track[t].unsqueeze(0)
+                
+                similarity = self.embedding_similarity.compute_similarity(embedding1=emb1, embedding2=emb2)
 
                 iou = self.compute_iou(blockA, blockB)
-                cost_matrix[d, t] = 1 - iou  # Conversion de l'IoU en coût
-
+                cost_matrix[d, t] = 1 - (0.5 * iou + 0.5 * similarity)
+        del embedding_batch_detection
+        del embedding_batch_track
+        
         # Application de l'algorithme hongrois
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
 
         return cost_matrix, row_ind, col_ind
     
+    @profile
     def associate_detections_to_tracks(self):
         cost_matrix, row_ind, col_ind = self.hungarian_similarity_matrix()
         keep_track = []
@@ -101,8 +125,11 @@ class Matcher():
     def find_matching_id(self, init=False):
         if init:
             for num_line, line in enumerate(self.current_frames_info):
+                x, y = int(line["bb_left"]), int(line["bb_top"])
+                w, h = int(line["bb_width"]), int(line["bb_height"])
                 line["id"] = int(num_line)
                 self.kalman_filters[num_line] = self.create_kalman_filter()
+
             self.track = self.current_frames_info
             self.nb_tracks = len(self.current_frames_info)
         else:

@@ -16,6 +16,8 @@ class Matcher():
         self.w_iou = w_iou
         self.w_similarity = w_similarity
         self.longevity = longevity
+        self.nb_track = 0
+        self.set_id = set()
 
     def set_currentframes(self, current_frames_info, current_frames):
         self.current_frames_info = current_frames_info
@@ -50,7 +52,6 @@ class Matcher():
     def convert_centroid_to_bb(self, centroid, width, height):
         return np.array([centroid[0] - width/2, centroid[1] - height/2, centroid[0] + width/2, centroid[1] + height/2])
 
-    @profile
     def hungarian_similarity_matrix(self):
         detections = self.current_frames_info
         tracks = self.track
@@ -65,7 +66,7 @@ class Matcher():
 
         embedding_batch_detection = self.embedding_similarity.compute_batch_embedding(self.current_frames, detections)
         embedding_batch_track = self.embedding_similarity.compute_batch_embedding(self.current_frames, tracks)
-        print(embedding_batch_detection.shape, embedding_batch_track.shape)
+
         for d, detection in enumerate(detections):
             d_x1, d_y1 = int(detection["bb_left"]), int(detection["bb_top"])
             d_w1, d_h1 = int(detection["bb_width"]), int(detection["bb_height"])
@@ -93,43 +94,47 @@ class Matcher():
 
         return cost_matrix, row_ind, col_ind
     
-    @profile
     def associate_detections_to_tracks(self):
         cost_matrix, row_ind, col_ind = self.hungarian_similarity_matrix()
         keep_track = []
         self.associations = {}
         
-        #Keep only matching tracks and update info frame
         for d, t in zip(row_ind, col_ind):
+            # Mise à jour des tracks existants
             self.associations[d] = t
             self.current_frames_info[d]["id"] = self.track[t]["id"]
             keep_track.append(self.track[t])
-            
-            #Update Kalman filter
+
+            # Update Kalman filter
             center = self.convert_bb_to_centroid(self.current_frames_info[d]["bb_left"],
                                             self.current_frames_info[d]["bb_top"], 
                                             self.current_frames_info[d]["bb_width"],
                                             self.current_frames_info[d]["bb_height"])
-            center = self.kalman_filters[self.track[t]["id"]].update(center)
-
+            if self.track[t]["id"] in self.kalman_filters:
+                self.kalman_filters[self.track[t]["id"]].update(center)
+            else:
+                self.kalman_filters[self.track[t]["id"]] = self.create_kalman_filter()
 
         #Remove tracks with no matching detections
-        for t, track in enumerate(self.track):
-            if t not in col_ind:
-                self.track[t]["longevity"] -= 1
-                if self.track[t]["longevity"] == 0:
+        for track in self.track:
+            if track["id"] not in [t["id"] for t in keep_track]:
+                track["longevity"] -= 1
+                if track["longevity"] <= 0:
                     del self.kalman_filters[track["id"]]
-                    del self.track[t]
+                    self.set_id.remove(track["id"])
                 else:
                     keep_track.append(track)
                 
         #Create new tracks for unmatched detections
         for frames in self.current_frames_info:
             if frames["id"] == -1:
-                frames["id"] = max([current_frame["id"] for current_frame in self.current_frames_info]) + 1
+                frame_id = max(self.set_id, default=0) + 1
+                frames["id"] = frame_id
                 frames["longevity"] = self.longevity
                 self.kalman_filters[frames["id"]] = self.create_kalman_filter()
                 keep_track.append(frames)
+                self.set_id.add(frame_id)
+                self.nb_track += 1
 
 
         self.track = keep_track
@@ -142,8 +147,10 @@ class Matcher():
                 line["id"] = int(num_line)
                 line["longevity"] = self.longevity
                 self.kalman_filters[num_line] = self.create_kalman_filter()
+                self.set_id.add(int(num_line))
 
             self.track = self.current_frames_info
+            self.nb_track = len(self.track)
         else:
             self.associate_detections_to_tracks()
             

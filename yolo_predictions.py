@@ -1,15 +1,22 @@
 import cv2
 import torch
 import os
+import argparse
+
+parser = argparse.ArgumentParser(description="Yolo Detection")
+parser.add_argument('--video_input', type=str, required=True, help='Path to input video frames')
+parser.add_argument('--output_file', type=str, required=True, help='Path to output solution file')
 
 model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
-
-list_dir = os.listdir("ADL-Rundle-6/img1")
+parser = parser.parse_args()
+list_dir = os.listdir(parser.video_input)
 list_dir.sort()
 
-with open("ADL-Rundle-6/det/yolo.txt", "w+") as f:
+
+
+with open(parser.output_file , "w+") as f:
     for i, file_name in enumerate(list_dir):
-        file_path = os.path.join("ADL-Rundle-6/img1", file_name)
+        file_path = os.path.join(parser.video_input, file_name)
         img = cv2.imread(file_path)
         results = model(img)
 

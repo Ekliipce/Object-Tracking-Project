@@ -7,6 +7,25 @@ from memory_profiler import profile
 
 class Matcher():
     def __init__(self, w_iou=0.5, w_similarity=0.5, longevity=20):
+        """
+        Initializes the Matcher object with specified parameters.
+        Args:
+            w_iou (float): Weight for Intersection over Union in the cost function.
+            w_similarity (float): Weight for visual similarity in the cost function.
+            longevity (int): The number of frames a track will persist without being detected.
+        Attributes:
+            current_frames_info (list): Stores current frame detections.
+            current_frames (None): Placeholder for the current frame image.
+            track (list): Stores active tracks.
+            kalman_filters (dict): Stores Kalman filters for each track.
+            associations (dict): Stores associations between detections and tracks.
+            embedding_similarity (EmbeddingSimilarity): Embedding similarity calculator.
+            w_iou (float): Weight for IoU.
+            w_similarity (float): Weight for similarity.
+            longevity (int): Longevity value for each track.
+            nb_track (int): Number of active tracks.
+            set_id (set): Set of unique track IDs.
+        """
         self.current_frames_info = []
         self.current_frames = None
         self.track = []
@@ -20,10 +39,24 @@ class Matcher():
         self.set_id = set()
 
     def set_currentframes(self, current_frames_info, current_frames):
+        """
+        Sets the current frame information and image.
+        Args:
+            current_frames_info (list): Information about detections in the current frame.
+            current_frames (tensor): Image tensor of the current frame.
+        """
         self.current_frames_info = current_frames_info
         self.current_frames = current_frames
 
     def compute_iou(self, boxA, boxB):
+        """
+        Computes the Intersection over Union (IoU) between two bounding boxes.
+        Args:
+            boxA (list): Coordinates of the first bounding box.
+            boxB (list): Coordinates of the second bounding box.
+        Returns:
+            float: The IoU between boxA and boxB.
+        """
         xA = max(boxA[0], boxB[0])
         yA = max(boxA[1], boxB[1])
         xB = min(boxA[2], boxB[2])
@@ -40,6 +73,11 @@ class Matcher():
         return iou
     
     def create_kalman_filter(self):
+        """
+        Creates and returns a new KalmanFilter object with predefined parameters.
+        Returns:
+            KalmanFilter: A new Kalman filter instance.
+        """
         dt = 0.1
         u_x, u_y = 1, 1
         std_acc = 1 
@@ -47,12 +85,32 @@ class Matcher():
         return KalmanFilter(dt, u_x, u_y, std_acc, x_std_meas, y_std_meas)
     
     def convert_bb_to_centroid(self, bb_left, bb_top, bb_width, bb_height):
+        """
+        Converts bounding box coordinates to centroid coordinates.
+        Args:
+            bb_left, bb_top, bb_width, bb_height (int): Bounding box coordinates.
+        Returns:
+            ndarray: Centroid coordinates.
+        """
         return np.array([bb_left + bb_width/2, bb_top + bb_height/2])
     
     def convert_centroid_to_bb(self, centroid, width, height):
+        """
+        Converts centroid coordinates back to bounding box coordinates.
+        Args:
+            centroid (ndarray): Centroid coordinates.
+            width, height (int): Width and height of the bounding box.
+        Returns:
+            ndarray: Bounding box coordinates.
+        """
         return np.array([centroid[0] - width/2, centroid[1] - height/2, centroid[0] + width/2, centroid[1] + height/2])
 
     def hungarian_similarity_matrix(self):
+        """
+        Creates a cost matrix for all detections and tracks, and applies the Hungarian algorithm.
+        Returns:
+            ndarray, ndarray, ndarray: Cost matrix, row indices, and column indices from the Hungarian algorithm.
+        """
         detections = self.current_frames_info
         tracks = self.track
 
@@ -95,6 +153,9 @@ class Matcher():
         return cost_matrix, row_ind, col_ind
     
     def associate_detections_to_tracks(self):
+        """
+        Associates detections with existing tracks or creates new tracks.
+        """
         cost_matrix, row_ind, col_ind = self.hungarian_similarity_matrix()
         keep_track = []
         self.associations = {}
@@ -140,6 +201,13 @@ class Matcher():
         self.track = keep_track
 
     def find_matching_id(self, init=False):
+        """
+        Finds matching IDs for the current frame detections.
+        Args:
+            init (bool): If True, initializes tracks with the current frame detections.
+        Returns:
+            list: Updated current frame information with associated track IDs.
+        """
         if init:
             for num_line, line in enumerate(self.current_frames_info):
                 x, y = int(line["bb_left"]), int(line["bb_top"])
